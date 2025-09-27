@@ -1,6 +1,7 @@
 const { Telegraf } = require("telegraf");
 const axios = require("axios");
 const { PersianNumber, PersianCurrency } = require("./utils");
+const {createServer} = require("http")
 require("dotenv").config();
 
 const bot = new Telegraf(process.env.TELEGRAM_API_KEY);
@@ -170,3 +171,16 @@ bot.action("cryptocurrency", async (ctx) => {
 });
 
 bot.launch();
+
+
+const app = createServer((req, res)=>{
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "text/html");
+  if (req.url == "/"){
+    res.end("<a href='https://t.me/alidev_r1996bot'>visit bot: @alidev_r1996bot</a>");
+  }
+})
+app.listen(3000, () => {
+  console.log("server is running on port 3000");
+});
+
