@@ -1,52 +1,79 @@
-const { Telegraf } = require("telegraf");
+// server.js
+// ✅ Refactored, stable, senior-level Telegram bot with Telegraf
+
+const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
-const { PersianNumber, PersianCurrency } = require("./utils");
-const {createServer} = require("http")
+const { createServer } = require("http");
 require("dotenv").config();
 
+const { PersianNumber, PersianCurrency } = require("./utils");
+
+/* ------------------------
+   Basic setup
+------------------------- */
 const bot = new Telegraf(process.env.TELEGRAM_API_KEY);
 const API_URL = `https://BrsApi.ir/Api/Market/Gold_Currency.php?key=${process.env.API_KEY}`;
 
-bot.start((ctx) => {
-  ctx.reply(`خوش آمدید، لطفا یکی از گزینه‌ها را انتخاب کنید:`, {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "📂 آپلود فایل و دریافت لینک", callback_data: "upload" }],
-        [{ text: "💵 مشاهده قیمت‌ها", callback_data: "prices" }],
-      ],
-    },
-  });
+/* ------------------------
+   Helpers (IMPORTANT)
+------------------------- */
+
+// Safe callback answer (prevents crashes)
+const safeAnswer = async (ctx) => {
+  try {
+    await ctx.answerCbQuery();
+  } catch (_) {}
+};
+
+// Always edit OR reply, never both
+const showMainMenu = async (ctx, edit = false) => {
+  const text = "خوش آمدید، لطفا یکی از گزینه‌ها را انتخاب کنید:";
+  const keyboard = Markup.inlineKeyboard([
+    [Markup.button.callback("📂 آپلود فایل و دریافت لینک", "upload")],
+    [Markup.button.callback("💵 مشاهده قیمت‌ها", "prices")],
+  ]);
+
+  if (edit) {
+    await ctx.editMessageText(text, keyboard);
+  } else {
+    await ctx.reply(text, keyboard);
+  }
+};
+
+const backToMain = Markup.inlineKeyboard([[Markup.button.callback("⬅️ منوی اصلی", "start")]]);
+
+/* ------------------------
+   Start command
+------------------------- */
+bot.start(async (ctx) => {
+  await showMainMenu(ctx);
 });
 
 bot.action("start", async (ctx) => {
-  await ctx.answerCbQuery();
-  ctx.deleteMessage();
-  ctx.reply(`خوش آمدید، لطفا یکی از گزینه‌ها را انتخاب کنید:`, {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "📂 آپلود فایل و دریافت لینک", callback_data: "upload" }],
-        [{ text: "💵 مشاهده قیمت‌ها", callback_data: "prices" }],
-      ],
-    },
-  });
+  await safeAnswer(ctx);
+  await showMainMenu(ctx, true);
 });
 
+/* ------------------------
+   Upload flow
+------------------------- */
 bot.action("upload", async (ctx) => {
-  await ctx.answerCbQuery();
-  ctx.deleteMessage();
-  await ctx.reply("لطفاً فایل خود را ارسال کنید تا لینک دانلود برای شما ساخته شود.", {
-    reply_markup: { inline_keyboard: [[{ text: "بازگشت", callback_data: "start" }]] },
-  });
+  await safeAnswer(ctx);
+
+  await ctx.editMessageText(
+    "📂 لطفاً فایل خود را ارسال کنید تا لینک دانلود ساخته شود",
+    Markup.inlineKeyboard([[Markup.button.callback("⬅️ بازگشت", "start")]])
+  );
 });
 
 bot.on("document", async (ctx) => {
   try {
     const fileId = ctx.message.document.file_id;
     const link = await ctx.telegram.getFileLink(fileId);
-    ctx.deleteMessage();
-    await ctx.reply(`✅ فایل شما آپلود شد\n🔗 لینک دانلود:\n\`\`\`${link.href}\`\`\``, {
+
+    await ctx.reply(`✅ فایل شما آپلود شد\n🔗 لینک دانلود:\n\n\`${link.href}\``, {
       parse_mode: "Markdown",
-      reply_markup: { inline_keyboard: [[{ text: "منوی اصلی", callback_data: "start" }]] },
+      reply_markup: backToMain.reply_markup,
     });
   } catch (err) {
     console.error(err);
@@ -54,133 +81,143 @@ bot.on("document", async (ctx) => {
   }
 });
 
+/* ------------------------
+   Prices menu
+------------------------- */
 bot.action("prices", async (ctx) => {
-  await ctx.answerCbQuery();
-  ctx.deleteMessage();
-  ctx.reply("لطفا نوع قیمت را انتخاب کنید:", {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "💵 قیمت دلار/یورو", callback_data: "currency" }],
-        [{ text: "🥇 قیمت طلا", callback_data: "gold" }],
-        [{ text: "₿ ارز دیجیتال", callback_data: "cryptocurrency" }],
-        [{ text: "⬅️ بازگشت", callback_data: "start" }],
-      ],
-    },
-  });
+  await safeAnswer(ctx);
+
+  await ctx.editMessageText(
+    "لطفا نوع قیمت را انتخاب کنید:",
+    Markup.inlineKeyboard([
+      [Markup.button.callback("💵 دلار / یورو", "currency")],
+      [Markup.button.callback("🥇 طلا", "gold")],
+      [Markup.button.callback("₿ رمزارز", "crypto")],
+      [Markup.button.callback("⬅️ بازگشت", "start")],
+    ])
+  );
 });
 
+/* ------------------------
+   Currency
+------------------------- */
 bot.action("currency", async (ctx) => {
-  await ctx.answerCbQuery();
-  try {
-    const {
-      data: { currency },
-    } = await axios.get(`${API_URL}&section=currency`);
+  await safeAnswer(ctx);
 
-    const data = currency
-      .map((i) => {
-        return `*${i.name}*\nقیمت: ${PersianCurrency(i.price)}\nتغییر: ${PersianCurrency(
-          i.change_value
-        )} - (${PersianNumber(i.change_percent)}%)`;
-      })
+  try {
+    await ctx.editMessageText("⏳ در حال دریافت قیمت ارز...");
+
+    const { data } = await axios.get(`${API_URL}&section=currency`);
+
+    const text = data.currency
+      .map(
+        (i) =>
+          `*${i.name}*\nقیمت: ${PersianCurrency(i.price)}\nتغییر: ${PersianCurrency(i.change_value)} (${PersianNumber(
+            i.change_percent
+          )}%)`
+      )
       .join("\n\n");
 
     await ctx.editMessageText(
-      `*قیمت لحظه‌ای ارز*\n\n${data}\n\n*بروزرسانی:* ${PersianNumber(currency[0].time)} - ${PersianNumber(
-        currency[0].date
+      `*قیمت لحظه‌ای ارز*\n\n${text}\n\n🕒 ${PersianNumber(data.currency[0].time)} - ${PersianNumber(
+        data.currency[0].date
       )}`,
       {
         parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "بازگشت", callback_data: "prices" }],
-            [{ text: "منوی اصلی", callback_data: "start" }],
-          ],
-        },
+        reply_markup: Markup.inlineKeyboard([
+          [Markup.button.callback("⬅️ بازگشت", "prices")],
+          [Markup.button.callback("🏠 منوی اصلی", "start")],
+        ]).reply_markup,
       }
     );
   } catch (err) {
-    await ctx.reply("❌ خطا در دریافت قیمت ارز");
-    console.error(err.response?.data || err.message);
-  }
-});
-
-bot.action("gold", async (ctx) => {
-  await ctx.answerCbQuery();
-  try {
-    const {
-      data: { gold },
-    } = await axios.get(`${API_URL}`);
-    const data = gold
-      .map((i) => {
-        return `*${PersianNumber(i.name)}*\nقیمت: ${PersianCurrency(i.price)}\nتغییر: ${PersianCurrency(
-          i.change_value
-        )} - (${PersianNumber(i.change_percent)}%)`;
-      })
-      .join("\n\n");
-
-    await ctx.editMessageText(
-      `*قیمت لحظه‌ای طلا*\n\n${data}\n\n*بروزرسانی:* ${PersianNumber(gold[0].time)} - ${PersianNumber(gold[0].date)}  `,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "بازگشت", callback_data: "prices" }],
-            [{ text: "منوی اصلی", callback_data: "start" }],
-          ],
-        },
-      }
-    );
-  } catch (err) {
-    await ctx.reply("❌ خطا در دریافت قیمت طلا");
     console.error(err);
+    await ctx.reply("❌ خطا در دریافت قیمت ارز");
   }
 });
 
-bot.action("cryptocurrency", async (ctx) => {
-  await ctx.answerCbQuery();
+/* ------------------------
+   Gold
+------------------------- */
+bot.action("gold", async (ctx) => {
+  await safeAnswer(ctx);
+
   try {
-    const {
-      data: { cryptocurrency },
-    } = await axios.get(`${API_URL}&section=cryptocurrency`);
-    const data = cryptocurrency
-      .map((i) => {
-        return `*${i.name}*\nقیمت: ${PersianCurrency(String(Number(i.price).toFixed()) + "000")}\n نماد: ${
-          i.symbol
-        }\n تغییر: (${PersianNumber(i.change_percent)}%)`;
-      })
+    await ctx.editMessageText("⏳ در حال دریافت قیمت طلا...");
+
+    const { data } = await axios.get(API_URL);
+
+    const text = data.gold
+      .map(
+        (i) =>
+          `*${i.name}*\nقیمت: ${PersianCurrency(i.price)}\nتغییر: ${PersianCurrency(i.change_value)} (${PersianNumber(
+            i.change_percent
+          )}%)`
+      )
       .join("\n\n");
 
-    await ctx.editMessageText(
-      `*₿ قیمت لحظه‌ای رمزارزها*\n(قیمت‌ها تقریبی است)\n\n${data}\n\n*بروزرسانی:* ${PersianNumber(
-        cryptocurrency[0].time
-      )} - ${PersianNumber(cryptocurrency[0].date)}`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "بازگشت", callback_data: "prices" }],
-            [{ text: "منوی اصلی", callback_data: "start" }],
-          ],
-        },
-      }
-    );
+    await ctx.editMessageText(`*قیمت لحظه‌ای طلا*\n\n${text}`, {
+      parse_mode: "Markdown",
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback("⬅️ بازگشت", "prices")],
+        [Markup.button.callback("🏠 منوی اصلی", "start")],
+      ]).reply_markup,
+    });
   } catch (err) {
-    await ctx.reply("❌ خطا در دریافت قیمت رمزارز");
-    console.error(err.response?.data || err.message);
+    console.error(err);
+    await ctx.reply("❌ خطا در دریافت قیمت طلا");
   }
 });
 
+/* ------------------------
+   Crypto
+------------------------- */
+bot.action("crypto", async (ctx) => {
+  await safeAnswer(ctx);
+
+  try {
+    await ctx.editMessageText("⏳ در حال دریافت قیمت رمزارز...");
+
+    const { data } = await axios.get(`${API_URL}&section=cryptocurrency`);
+
+    const text = data.cryptocurrency
+      .map(
+        (i) =>
+          `*${i.name}* (${i.symbol})\nقیمت: ${PersianCurrency(
+            String(Number(i.price).toFixed()) + "000"
+          )}\nتغییر: ${PersianNumber(i.change_percent)}%`
+      )
+      .join("\n\n");
+
+    await ctx.editMessageText(`*₿ قیمت رمزارزها*\n\n${text}`, {
+      parse_mode: "Markdown",
+      reply_markup: Markup.inlineKeyboard([
+        [Markup.button.callback("⬅️ بازگشت", "prices")],
+        [Markup.button.callback("🏠 منوی اصلی", "start")],
+      ]).reply_markup,
+    });
+  } catch (err) {
+    console.error(err);
+    await ctx.reply("❌ خطا در دریافت قیمت رمزارز");
+  }
+});
+
+/* ------------------------
+   Launch bot
+------------------------- */
 bot.launch();
 
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
 
-const app = createServer((req, res)=>{
-  res.setHeader("Access-Control-Allow-Origin", "*");
+/* ------------------------
+   Simple HTTP server (Liara / Render)
+------------------------- */
+const app = createServer((req, res) => {
   res.setHeader("Content-Type", "text/html");
-  if (req.url == "/"){
-    res.end("<a href='https://t.me/alidev_r1996bot'>visit bot: @alidev_r1996bot</a>");
-  }
-})
-app.listen(3000, () => {
-  console.log("server is running on port 3000");
+  res.end("<a href='https://t.me/alidev_r1996bot'>@alidev_r1996bot</a>");
 });
 
+app.listen(3000, () => {
+  console.log("HTTP server running on port 3000");
+});
